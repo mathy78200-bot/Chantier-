@@ -297,7 +297,8 @@ class EstimationTache {
 
   /// Une valeur constatée existe et diffère du snapshot (bouton « reprendre »).
   bool get valeurConstateeDisponible =>
-      minutesParUniteReel != null && minutesParUniteReel != minutesParUniteSnapshot;
+      minutesParUniteReel != null &&
+      minutesParUniteReel != minutesParUniteSnapshot;
 }
 
 /// Analyse d'un travaux sup : prévu vs réel, réel = Σ dépenses / heures liées.

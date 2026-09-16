@@ -47,7 +47,8 @@ abstract final class DateFmt {
 
   /// Une date métier stockée à minuit UTC doit être affichée telle quelle
   /// (la conversion locale ferait reculer d'un jour à l'ouest de Greenwich).
-  static DateTime _pourAffichage(DateTime d) => d.isUtc &&
+  static DateTime _pourAffichage(DateTime d) =>
+      d.isUtc &&
           d.hour == 0 &&
           d.minute == 0 &&
           d.second == 0 &&

@@ -18,7 +18,7 @@ class ValidationException extends AppException {
 
 class TransitionInvalideException extends AppException {
   const TransitionInvalideException(this.depuis, this.vers)
-      : super('Transition de statut impossible : $depuis → $vers.');
+    : super('Transition de statut impossible : $depuis → $vers.');
 
   final String depuis;
   final String vers;
@@ -27,7 +27,7 @@ class TransitionInvalideException extends AppException {
 /// Une écriture optimiste a été refusée après coup (§9.2).
 class EcritureRefuseeException extends AppException {
   const EcritureRefuseeException(this.cause)
-      : super('Une modification n\'a pas pu être enregistrée.');
+    : super('Une modification n\'a pas pu être enregistrée.');
 
   final Object cause;
 }
@@ -42,8 +42,9 @@ class AuthException extends AppException {
     final message = switch (code) {
       'invalid-email' => 'Adresse e-mail invalide.',
       'user-disabled' => 'Ce compte a été désactivé.',
-      'user-not-found' || 'wrong-password' || 'invalid-credential' =>
-        'E-mail ou mot de passe incorrect.',
+      'user-not-found' ||
+      'wrong-password' ||
+      'invalid-credential' => 'E-mail ou mot de passe incorrect.',
       'email-already-in-use' => 'Un compte existe déjà avec cet e-mail.',
       'weak-password' => 'Mot de passe trop faible (6 caractères minimum).',
       'network-request-failed' => 'Pas de connexion réseau.',

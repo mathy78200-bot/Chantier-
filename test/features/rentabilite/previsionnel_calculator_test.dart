@@ -53,21 +53,23 @@ void main() {
       expect(r.dureeDeriveeDesDates, isFalse);
     });
 
-    test('charge prévue globale saisie : prioritaire sur heures × effectif',
-        () {
-      final r = PrevisionnelCalculator.compute(
-        Fixtures.data(
-          previsionnel: Fixtures.previsionnel(
-            heuresPrevuesMinutes: 4800,
-            heuresPersonnesPrevuesMinutes: 7200,
-            effectifPrevu: 2,
+    test(
+      'charge prévue globale saisie : prioritaire sur heures × effectif',
+      () {
+        final r = PrevisionnelCalculator.compute(
+          Fixtures.data(
+            previsionnel: Fixtures.previsionnel(
+              heuresPrevuesMinutes: 4800,
+              heuresPersonnesPrevuesMinutes: 7200,
+              effectifPrevu: 2,
+            ),
           ),
-        ),
-      );
+        );
 
-      expect(r.chargePrevueMinutes, 7200);
-      expect(r.chargeDeriveeDesTaches, isFalse);
-    });
+        expect(r.chargePrevueMinutes, 7200);
+        expect(r.chargeDeriveeDesTaches, isFalse);
+      },
+    );
 
     group('budget', () {
       test('global prioritaire sur la somme par type', () {
@@ -92,7 +94,10 @@ void main() {
         final r = PrevisionnelCalculator.compute(
           Fixtures.data(
             previsionnel: Fixtures.previsionnel(
-              budgetParTypeCents: {'materiaux': 300000, 'sousTraitance': 200000},
+              budgetParTypeCents: {
+                'materiaux': 300000,
+                'sousTraitance': 200000,
+              },
             ),
           ),
         );
@@ -180,9 +185,7 @@ void main() {
         final r = PrevisionnelCalculator.compute(
           Fixtures.data(
             previsionnel: Fixtures.previsionnel(heuresPrevuesMinutes: 4800),
-            taches: [
-              Fixtures.tache(id: 't-1', heuresPrevuesMinutes: 600),
-            ],
+            taches: [Fixtures.tache(id: 't-1', heuresPrevuesMinutes: 600)],
           ),
         );
 
@@ -282,8 +285,7 @@ void main() {
         expect(r.heuresPrevuesTotalMinutes, 5400);
       });
 
-      test('sans heures prévues, le total reste null malgré un TS accepté',
-          () {
+      test('sans heures prévues, le total reste null malgré un TS accepté', () {
         final r = PrevisionnelCalculator.compute(
           Fixtures.data(
             travauxSup: [
@@ -353,27 +355,29 @@ void main() {
         expect(r.effectifPrevu, 3);
       });
 
-      test('total = charge + Σ TS[accepte] heures × effectif (1 par défaut)',
-          () {
-        final r = PrevisionnelCalculator.compute(
-          Fixtures.data(
-            previsionnel: Fixtures.previsionnel(
-              heuresPersonnesPrevuesMinutes: 9600,
-            ),
-            travauxSup: [
-              Fixtures.travauxSup(
-                id: 'ts-1',
-                heuresPrevuesMinutes: 600,
-                effectifPrevu: 2,
+      test(
+        'total = charge + Σ TS[accepte] heures × effectif (1 par défaut)',
+        () {
+          final r = PrevisionnelCalculator.compute(
+            Fixtures.data(
+              previsionnel: Fixtures.previsionnel(
+                heuresPersonnesPrevuesMinutes: 9600,
               ),
-              Fixtures.travauxSup(id: 'ts-2', heuresPrevuesMinutes: 100),
-            ],
-          ),
-        );
+              travauxSup: [
+                Fixtures.travauxSup(
+                  id: 'ts-1',
+                  heuresPrevuesMinutes: 600,
+                  effectifPrevu: 2,
+                ),
+                Fixtures.travauxSup(id: 'ts-2', heuresPrevuesMinutes: 100),
+              ],
+            ),
+          );
 
-        expect(r.chargePrevueMinutes, 9600);
-        expect(r.chargePrevueTotalMinutes, 9600 + 1200 + 100);
-      });
+          expect(r.chargePrevueMinutes, 9600);
+          expect(r.chargePrevueTotalMinutes, 9600 + 1200 + 100);
+        },
+      );
 
       test('heures globales sans effectif : charge non calculable', () {
         final r = PrevisionnelCalculator.compute(

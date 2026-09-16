@@ -17,11 +17,12 @@ class ChantierData {
     Iterable<SaisieHeures> heures = const [],
     Iterable<TacheChantier> taches = const [],
     Iterable<TravauxSupplementaire> travauxSup = const [],
-  })  : depenses = List.unmodifiable(depenses.where((d) => !d.estSupprime)),
-        heures = List.unmodifiable(heures.where((h) => !h.estSupprime)),
-        taches = List.unmodifiable(taches.where((t) => !t.estSupprime)),
-        travauxSup =
-            List.unmodifiable(travauxSup.where((ts) => !ts.estSupprime));
+  }) : depenses = List.unmodifiable(depenses.where((d) => !d.estSupprime)),
+       heures = List.unmodifiable(heures.where((h) => !h.estSupprime)),
+       taches = List.unmodifiable(taches.where((t) => !t.estSupprime)),
+       travauxSup = List.unmodifiable(
+         travauxSup.where((ts) => !ts.estSupprime),
+       );
 
   final Chantier chantier;
   final Previsionnel? previsionnel;

@@ -23,17 +23,16 @@ abstract final class Fixtures {
     DateTime? dateDebutPrevue,
     DateTime? dateFinPrevue,
     DateTime? deletedAt,
-  }) =>
-      Chantier(
-        id: id,
-        nom: nom,
-        modePrix: modePrix,
-        statut: statut,
-        prixVenduInitialCents: prixVenduInitialCents,
-        dateDebutPrevue: dateDebutPrevue,
-        dateFinPrevue: dateFinPrevue,
-        deletedAt: deletedAt,
-      );
+  }) => Chantier(
+    id: id,
+    nom: nom,
+    modePrix: modePrix,
+    statut: statut,
+    prixVenduInitialCents: prixVenduInitialCents,
+    dateDebutPrevue: dateDebutPrevue,
+    dateFinPrevue: dateFinPrevue,
+    deletedAt: deletedAt,
+  );
 
   static Previsionnel previsionnel({
     String chantierId = chantierId,
@@ -43,16 +42,15 @@ abstract final class Fixtures {
     int? heuresPersonnesPrevuesMinutes,
     int? effectifPrevu,
     int? dureePrevueJours,
-  }) =>
-      Previsionnel(
-        chantierId: chantierId,
-        budgetDepensesCents: budgetDepensesCents,
-        budgetParTypeCents: budgetParTypeCents,
-        heuresPrevuesMinutes: heuresPrevuesMinutes,
-        heuresPersonnesPrevuesMinutes: heuresPersonnesPrevuesMinutes,
-        effectifPrevu: effectifPrevu,
-        dureePrevueJours: dureePrevueJours,
-      );
+  }) => Previsionnel(
+    chantierId: chantierId,
+    budgetDepensesCents: budgetDepensesCents,
+    budgetParTypeCents: budgetParTypeCents,
+    heuresPrevuesMinutes: heuresPrevuesMinutes,
+    heuresPersonnesPrevuesMinutes: heuresPersonnesPrevuesMinutes,
+    effectifPrevu: effectifPrevu,
+    dureePrevueJours: dureePrevueJours,
+  );
 
   /// Prévisionnel complet : budget 6 000 €, 80 h, 2 personnes, 5 jours.
   static Previsionnel previsionnelComplet({String chantierId = chantierId}) =>
@@ -76,21 +74,20 @@ abstract final class Fixtures {
     int? baremeKmCentsSnapshot,
     bool montantSaisiManuellement = false,
     DateTime? deletedAt,
-  }) =>
-      Depense(
-        id: id,
-        chantierId: chantierId,
-        date: date ?? jour,
-        type: type,
-        montantCents: montantCents,
-        libelle: 'Dépense $id',
-        tacheId: tacheId,
-        travauxSupId: travauxSupId,
-        distanceKm: distanceKm,
-        baremeKmCentsSnapshot: baremeKmCentsSnapshot,
-        montantSaisiManuellement: montantSaisiManuellement,
-        deletedAt: deletedAt,
-      );
+  }) => Depense(
+    id: id,
+    chantierId: chantierId,
+    date: date ?? jour,
+    type: type,
+    montantCents: montantCents,
+    libelle: 'Dépense $id',
+    tacheId: tacheId,
+    travauxSupId: travauxSupId,
+    distanceKm: distanceKm,
+    baremeKmCentsSnapshot: baremeKmCentsSnapshot,
+    montantSaisiManuellement: montantSaisiManuellement,
+    deletedAt: deletedAt,
+  );
 
   static SaisieHeures heures({
     String id = 'h-1',
@@ -101,17 +98,16 @@ abstract final class Fixtures {
     String? tacheId,
     String? travauxSupId,
     DateTime? deletedAt,
-  }) =>
-      SaisieHeures(
-        id: id,
-        chantierId: chantierId,
-        date: date ?? jour,
-        nbPersonnes: nbPersonnes,
-        minutesParPersonne: minutesParPersonne,
-        tacheId: tacheId,
-        travauxSupId: travauxSupId,
-        deletedAt: deletedAt,
-      );
+  }) => SaisieHeures(
+    id: id,
+    chantierId: chantierId,
+    date: date ?? jour,
+    nbPersonnes: nbPersonnes,
+    minutesParPersonne: minutesParPersonne,
+    tacheId: tacheId,
+    travauxSupId: travauxSupId,
+    deletedAt: deletedAt,
+  );
 
   static TacheChantier tache({
     String id = 't-1',
@@ -127,22 +123,21 @@ abstract final class Fixtures {
     int? bibliothequeVersion,
     String? travauxSupId,
     DateTime? deletedAt,
-  }) =>
-      TacheChantier(
-        id: id,
-        chantierId: chantierId,
-        libelle: libelle,
-        unite: unite,
-        quantitePrevue: quantitePrevue,
-        minutesParUniteSnapshot: minutesParUniteSnapshot,
-        effectifDefautSnapshot: effectifDefautSnapshot,
-        heuresPrevuesMinutes: heuresPrevuesMinutes,
-        effectifPrevu: effectifPrevu,
-        bibliothequeTacheId: bibliothequeTacheId,
-        bibliothequeVersion: bibliothequeVersion,
-        travauxSupId: travauxSupId,
-        deletedAt: deletedAt,
-      );
+  }) => TacheChantier(
+    id: id,
+    chantierId: chantierId,
+    libelle: libelle,
+    unite: unite,
+    quantitePrevue: quantitePrevue,
+    minutesParUniteSnapshot: minutesParUniteSnapshot,
+    effectifDefautSnapshot: effectifDefautSnapshot,
+    heuresPrevuesMinutes: heuresPrevuesMinutes,
+    effectifPrevu: effectifPrevu,
+    bibliothequeTacheId: bibliothequeTacheId,
+    bibliothequeVersion: bibliothequeVersion,
+    travauxSupId: travauxSupId,
+    deletedAt: deletedAt,
+  );
 
   static TravauxSupplementaire travauxSup({
     String id = 'ts-1',
@@ -154,19 +149,18 @@ abstract final class Fixtures {
     int? heuresPrevuesMinutes,
     int? effectifPrevu,
     DateTime? deletedAt,
-  }) =>
-      TravauxSupplementaire(
-        id: id,
-        chantierId: chantierId,
-        libelle: libelle,
-        dateProposition: jour,
-        statut: statut,
-        prixVenduCents: prixVenduCents,
-        budgetDepensesCents: budgetDepensesCents,
-        heuresPrevuesMinutes: heuresPrevuesMinutes,
-        effectifPrevu: effectifPrevu,
-        deletedAt: deletedAt,
-      );
+  }) => TravauxSupplementaire(
+    id: id,
+    chantierId: chantierId,
+    libelle: libelle,
+    dateProposition: jour,
+    statut: statut,
+    prixVenduCents: prixVenduCents,
+    budgetDepensesCents: budgetDepensesCents,
+    heuresPrevuesMinutes: heuresPrevuesMinutes,
+    effectifPrevu: effectifPrevu,
+    deletedAt: deletedAt,
+  );
 
   static ChantierData data({
     Chantier? chantier,
@@ -175,13 +169,12 @@ abstract final class Fixtures {
     List<SaisieHeures> heures = const [],
     List<TacheChantier> taches = const [],
     List<TravauxSupplementaire> travauxSup = const [],
-  }) =>
-      ChantierData(
-        chantier: chantier ?? Fixtures.chantier(),
-        previsionnel: previsionnel,
-        depenses: depenses,
-        heures: heures,
-        taches: taches,
-        travauxSup: travauxSup,
-      );
+  }) => ChantierData(
+    chantier: chantier ?? Fixtures.chantier(),
+    previsionnel: previsionnel,
+    depenses: depenses,
+    heures: heures,
+    taches: taches,
+    travauxSup: travauxSup,
+  );
 }

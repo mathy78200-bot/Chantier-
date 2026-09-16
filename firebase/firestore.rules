@@ -5,13 +5,19 @@ rules_version = '2';
 // Références CLAUDE.md : §2 (R2 modePrix figé, R4 chantierId == cid, R6 aucun
 // delete physique, R11 quatre statuts), §5 (modèle), §9.2 (les invariants sont
 // aussi validés côté client), §9.9 (versionnage bibliothèque), §9.10 (les
-// transitions de statut ne sont PAS contraintes ici), §9.14 (périmètre :
-// isolation par uid, pas de quotas, App Check à activer avant production).
+// transitions de statut ne sont PAS contraintes ici), §9.11 (storagePath d'un
+// justificatif déplacé), §9.14 (périmètre : isolation par uid, pas de quotas,
+// App Check à activer avant production).
 //
 // Les écritures client sont des set(merge: true) ou update() : dans les deux
 // cas request.resource.data est l'état résultant complet du document, c'est lui
 // qui est validé. createdAt / updatedAt sont des serverTimestamp, comparés à
-// request.time.
+// request.time. Les champs optionnels sont écrits explicitement à null
+// (include_if_null) : `d.get('x', null)` accepte l'absence comme le null.
+//
+// Chaque document n'accepte que les clés de son entité Dart (`clesX()`) :
+// toute nouvelle clé doit être ajoutée ici AVANT de déployer l'application
+// (CLAUDE.md §10.7), sinon les écritures sont refusées (§9.2).
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -30,10 +36,6 @@ service cloud.firestore {
       return v == null || v is timestamp;
     }
 
-    function isInt(v) {
-      return v is int;
-    }
-
     function isIntMin(v, min) {
       return v is int && v >= min;
     }
@@ -42,16 +44,16 @@ service cloud.firestore {
       return v is int && v >= min && v <= max;
     }
 
-    function isIntOpt(v) {
-      return v == null || v is int;
-    }
-
     function isIntOptMin(v, min) {
       return v == null || isIntMin(v, min);
     }
 
     function isNumMin(v, min) {
       return v is number && v >= min;
+    }
+
+    function isNumPos(v) {
+      return v is number && v > 0;
     }
 
     function isNumOptMin(v, min) {
@@ -86,6 +88,16 @@ service cloud.firestore {
       return v is string && v in valeurs;
     }
 
+    // Aucune clé hors de celles de l'entité (typo, données arbitraires).
+    function clesAutorisees(d, cles) {
+      return d.keys().hasOnly(cles);
+    }
+
+    // Clé absente, ou int >= min (jamais null).
+    function absentOuIntMin(m, cle, min) {
+      return !(cle in m) || isIntMin(m[cle], min);
+    }
+
     // Champ identique avant / après (absent des deux côtés accepté).
     function unchanged(field) {
       return request.resource.data.get(field, null) == resource.data.get(field, null);
@@ -96,9 +108,30 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(champs);
     }
 
-    // R6 : deletedAt timestamp ou null, deletedReason string ou null.
+    // ------------------------------------------------------------------
+    // Soft delete (R6) — FirestoreSubcollectionRepository.champsSoftDelete /
+    // champsRestore : deletedAt = serverTimestamp | null explicite.
+    // ------------------------------------------------------------------
     function softDeleteFields(d) {
-      return isTsOpt(d.get('deletedAt', null)) && isStrOpt(d.get('deletedReason', null));
+      return isTsOpt(d.get('deletedAt', null))
+        && isStrOpt(d.get('deletedReason', null))
+        && (d.get('deletedAt', null) != null || d.get('deletedReason', null) == null);
+    }
+
+    // Création : le document naît actif, `deletedAt` présent à null (la
+    // requête `where('deletedAt', isNull: true)` ne retient que les documents
+    // où le champ existe).
+    function creationActive() {
+      return 'deletedAt' in request.resource.data
+        && request.resource.data.deletedAt == null;
+    }
+
+    // Mise à jour : restauration (null), inchangé (upsert d'une entité relue)
+    // ou suppression posée par le serveur (softDelete, deplacerVers).
+    function deletedAtCoherent() {
+      return request.resource.data.get('deletedAt', null) == null
+        || unchanged('deletedAt')
+        || request.resource.data.deletedAt == request.time;
     }
 
     // ------------------------------------------------------------------
@@ -113,9 +146,9 @@ service cloud.firestore {
       return request.resource.data.createdAt == request.time && updatedAtServeur();
     }
 
-    // Mise à jour : createdAt inchangé, ou re-posé par le serveur (§9.3 : un
-    // document créé puis modifié hors-ligne est relu avec createdAt == null
-    // tant qu'il n'est pas synchronisé, le codec y remet un serverTimestamp).
+    // Mise à jour : createdAt inchangé, ou re-posé par le serveur (le codec
+    // remet un serverTimestamp quand l'entité écrite n'a pas de createdAt :
+    // `Previsionnel.vide`, copie de `deplacerVers` sur un document existant).
     function horodatageMaj() {
       return isTs(request.resource.data.createdAt)
         && (unchanged('createdAt') || request.resource.data.createdAt == request.time)
@@ -162,16 +195,34 @@ service cloud.firestore {
       return ['image/jpeg', 'image/png', 'application/pdf'];
     }
 
+    // Justificatif.extensionsParMime (nom de fichier `{id}.{ext}`).
+    function extensionDe(mime) {
+      return mime == 'image/jpeg' ? 'jpg' : (mime == 'image/png' ? 'png' : 'pdf');
+    }
+
     // ------------------------------------------------------------------
     // users/{uid}
     // ------------------------------------------------------------------
+    function clesUtilisateur() {
+      return ['email', 'createdAt', 'parametres'];
+    }
+
+    function clesParametres() {
+      return ['modePrixParDefaut', 'seuilOrangePct', 'seuilRougePct',
+        'seuilProjectionPct', 'baremeKmCents', 'effectifParDefaut',
+        'minutesJourneeType', 'entrepriseNom', 'updatedAt'];
+    }
+
     // ParametresUtilisateur (champ `parametres`, avec son propre updatedAt).
     function parametresValides(p) {
       return isMap(p)
+        && clesAutorisees(p, clesParametres())
         && isEnum(p.modePrixParDefaut, modesPrix())
         && isNumMin(p.seuilOrangePct, 0)
         && isNumMin(p.seuilRougePct, 0)
+        && p.seuilRougePct >= p.seuilOrangePct
         && isNumMin(p.seuilProjectionPct, 0)
+        && p.seuilProjectionPct <= 100
         && isIntMin(p.baremeKmCents, 0)
         && isIntMin(p.effectifParDefaut, 1)
         && isIntRange(p.minutesJourneeType, 1, 1440)
@@ -179,9 +230,13 @@ service cloud.firestore {
         && isTsOpt(p.get('updatedAt', null));
     }
 
+    // email et createdAt sont posés par initialiserUtilisateur ; le document
+    // peut aussi naître d'un premier `save` (parametres seuls, voir
+    // auth_controller « le document sera créé au premier réglage »).
     function utilisateurValide(d) {
-      return isStr(d.email)
-        && isTs(d.createdAt)
+      return clesAutorisees(d, clesUtilisateur())
+        && (!('email' in d) || isStr(d.email))
+        && (!('createdAt' in d) || isTs(d.createdAt))
         && parametresValides(d.parametres);
     }
 
@@ -189,13 +244,37 @@ service cloud.firestore {
       return request.resource.data.parametres.updatedAt == request.time;
     }
 
+    // Création : createdAt absent ou posé par le serveur.
+    function createdAtUtilisateurCreation() {
+      return !('createdAt' in request.resource.data)
+        || request.resource.data.createdAt == request.time;
+    }
+
+    // Mise à jour : createdAt absent, inchangé, ou posé par le serveur s'il
+    // n'existait pas encore.
+    function createdAtUtilisateurMaj() {
+      return !('createdAt' in request.resource.data)
+        || unchanged('createdAt')
+        || (resource.data.get('createdAt', null) == null
+          && request.resource.data.createdAt == request.time);
+    }
+
     // ------------------------------------------------------------------
     // users/{uid}/categories/{id}
     // ------------------------------------------------------------------
+    function clesCategorie() {
+      return ['libelle', 'domaine', 'ordre', 'actif', 'sousCategories',
+        'createdAt', 'updatedAt'];
+    }
+
+    // sousCategories : liste de maps {id, libelle, ordre, actif} ; les
+    // éléments ne sont pas validés un à un (pas de boucle dans les règles),
+    // le client le fait (validerCategorie).
     function categorieValide(d) {
-      return isStrNonVide(d.libelle)
+      return clesAutorisees(d, clesCategorie())
+        && isStrNonVide(d.libelle)
         && isEnum(d.domaine, domainesCategorie())
-        && isInt(d.ordre)
+        && isIntMin(d.ordre, 0)
         && isBool(d.actif)
         && isList(d.sousCategories);
     }
@@ -203,8 +282,15 @@ service cloud.firestore {
     // ------------------------------------------------------------------
     // users/{uid}/bibliothequeTaches/{id}
     // ------------------------------------------------------------------
+    function clesTacheBibliotheque() {
+      return ['libelle', 'categorieId', 'sousCategorieId', 'unite',
+        'minutesParUnite', 'effectifDefaut', 'version', 'actif',
+        'createdAt', 'updatedAt'];
+    }
+
     function tacheBibliothequeValide(d) {
-      return isStrNonVide(d.libelle)
+      return clesAutorisees(d, clesTacheBibliotheque())
+        && isStrNonVide(d.libelle)
         && isStrOpt(d.get('categorieId', null))
         && isStrOpt(d.get('sousCategorieId', null))
         && isEnum(d.unite, unites())
@@ -214,12 +300,14 @@ service cloud.firestore {
         && isBool(d.actif);
     }
 
-    // R5 / §9.9 : toute modification incrémente la version de 1.
+    // R5 / §9.9 : toute modification incrémente la version de 1
+    // (modifierTache : set(merge) avec version + 1).
     function versionIncrementee() {
       return request.resource.data.version == resource.data.version + 1;
     }
 
-    // Archivage / réactivation : seul `actif` change, la version est conservée.
+    // Archivage / réactivation (archiverTache : update de actif seul) : la
+    // version est conservée, seuls actif et updatedAt changent.
     function archivageSeul() {
       return request.resource.data.version == resource.data.version
         && seulsChampsModifies(['actif', 'updatedAt']);
@@ -228,8 +316,16 @@ service cloud.firestore {
     // ------------------------------------------------------------------
     // users/{uid}/chantiers/{cid}
     // ------------------------------------------------------------------
+    function clesChantier() {
+      return ['nom', 'modePrix', 'statut', 'clientNom', 'clientTelephone',
+        'adresse', 'prixVenduInitialCents', 'dateDevis', 'dateSignature',
+        'dateDebutPrevue', 'dateFinPrevue', 'dateDebutReelle', 'dateFinReelle',
+        'notes', 'createdAt', 'updatedAt', 'deletedAt', 'deletedReason'];
+    }
+
     function chantierValide(d) {
-      return isStrNonVide(d.nom)
+      return clesAutorisees(d, clesChantier())
+        && isStrNonVide(d.nom)
         && isEnum(d.modePrix, modesPrix())
         && isEnum(d.statut, statutsChantier())
         && isStrOpt(d.get('clientNom', null))
@@ -249,21 +345,31 @@ service cloud.firestore {
     // ------------------------------------------------------------------
     // chantiers/{cid}/previsionnel/main
     // ------------------------------------------------------------------
-    // budgetParTypeCents : clés = TypeDepense.name, valeurs int >= 0.
+    function clesPrevisionnel() {
+      return ['chantierId', 'budgetDepensesCents', 'budgetParTypeCents',
+        'heuresPrevuesMinutes', 'heuresPersonnesPrevuesMinutes',
+        'effectifPrevu', 'dureePrevueJours', 'commentaire',
+        'createdAt', 'updatedAt'];
+    }
+
+    // budgetParTypeCents : clés = TypeDepense.name, valeurs int >= 0 (jamais
+    // null : Map<String, int> côté client) ; la map vide est acceptée.
     function budgetParTypeValide(m) {
       return isMap(m)
         && m.keys().hasOnly(typesDepense())
-        && isIntOptMin(m.get('materiaux', null), 0)
-        && isIntOptMin(m.get('sousTraitance', null), 0)
-        && isIntOptMin(m.get('repas', null), 0)
-        && isIntOptMin(m.get('hotel', null), 0)
-        && isIntOptMin(m.get('deplacement', null), 0)
-        && isIntOptMin(m.get('autre', null), 0);
+        && absentOuIntMin(m, 'materiaux', 0)
+        && absentOuIntMin(m, 'sousTraitance', 0)
+        && absentOuIntMin(m, 'repas', 0)
+        && absentOuIntMin(m, 'hotel', 0)
+        && absentOuIntMin(m, 'deplacement', 0)
+        && absentOuIntMin(m, 'autre', 0);
     }
 
-    // chantierId est porté par le chemin (§5) : accepté seulement s'il vaut cid.
+    // chantierId est porté par le chemin (§5) : le client ne l'écrit pas ;
+    // accepté seulement s'il vaut cid.
     function previsionnelValide(d, cid) {
-      return (!('chantierId' in d) || d.chantierId == cid)
+      return clesAutorisees(d, clesPrevisionnel())
+        && (!('chantierId' in d) || d.chantierId == cid)
         && isIntOptMin(d.get('budgetDepensesCents', null), 0)
         && (!('budgetParTypeCents' in d) || budgetParTypeValide(d.budgetParTypeCents))
         && isIntOptMin(d.get('heuresPrevuesMinutes', null), 0)
@@ -276,31 +382,51 @@ service cloud.firestore {
     // ------------------------------------------------------------------
     // chantiers/{cid}/taches/{id}
     // ------------------------------------------------------------------
+    function clesTache() {
+      return ['chantierId', 'libelle', 'categorieId', 'sousCategorieId',
+        'bibliothequeTacheId', 'bibliothequeVersion', 'unite',
+        'quantitePrevue', 'minutesParUniteSnapshot', 'effectifDefautSnapshot',
+        'heuresPrevuesMinutes', 'effectifPrevu', 'travauxSupId', 'statut',
+        'ordre', 'createdAt', 'updatedAt', 'deletedAt', 'deletedReason'];
+    }
+
     function tacheValide(d, cid) {
-      return d.chantierId == cid
+      return clesAutorisees(d, clesTache())
+        && d.chantierId == cid
         && isStrNonVide(d.libelle)
         && isStrOpt(d.get('categorieId', null))
         && isStrOpt(d.get('sousCategorieId', null))
         && isStrOpt(d.get('bibliothequeTacheId', null))
-        && isIntOpt(d.get('bibliothequeVersion', null))
+        && isIntOptMin(d.get('bibliothequeVersion', null), 1)
         && isEnum(d.unite, unites())
-        && isNumMin(d.quantitePrevue, 0)
+        && isNumPos(d.quantitePrevue)
         && isNumOptMin(d.get('minutesParUniteSnapshot', null), 0)
         && isIntOptMin(d.get('effectifDefautSnapshot', null), 1)
         && isIntOptMin(d.get('heuresPrevuesMinutes', null), 0)
         && isIntOptMin(d.get('effectifPrevu', null), 1)
         && isStrOpt(d.get('travauxSupId', null))
         && isEnum(d.statut, statutsTache())
-        && isInt(d.ordre)
+        && isIntMin(d.ordre, 0)
         && softDeleteFields(d);
     }
 
     // ------------------------------------------------------------------
     // chantiers/{cid}/depenses/{id}
     // ------------------------------------------------------------------
+    function clesDepense() {
+      return ['chantierId', 'date', 'type', 'montantCents', 'libelle',
+        'fournisseur', 'categorieId', 'sousCategorieId', 'tacheId',
+        'travauxSupId', 'justificatifIds', 'distanceKm',
+        'baremeKmCentsSnapshot', 'montantSaisiManuellement', 'commentaire',
+        'createdAt', 'updatedAt', 'deletedAt', 'deletedReason'];
+    }
+
     // R4 : une dépense appartient toujours à un chantier (chantierId == cid).
+    // justificatifIds : liste (vide acceptée) d'ids ; éléments non validés
+    // un à un (pas de boucle dans les règles).
     function depenseValide(d, cid) {
-      return d.chantierId == cid
+      return clesAutorisees(d, clesDepense())
+        && d.chantierId == cid
         && isEnum(d.type, typesDepense())
         && isIntMin(d.montantCents, 0)
         && isTs(d.date)
@@ -321,8 +447,15 @@ service cloud.firestore {
     // ------------------------------------------------------------------
     // chantiers/{cid}/heures/{id}
     // ------------------------------------------------------------------
+    function clesSaisieHeures() {
+      return ['chantierId', 'date', 'tacheId', 'tacheLibelleSnapshot',
+        'travauxSupId', 'nbPersonnes', 'minutesParPersonne', 'commentaire',
+        'createdAt', 'updatedAt', 'deletedAt', 'deletedReason'];
+    }
+
     function saisieHeuresValide(d, cid) {
-      return d.chantierId == cid
+      return clesAutorisees(d, clesSaisieHeures())
+        && d.chantierId == cid
         && isTs(d.date)
         && isStrOpt(d.get('tacheId', null))
         && isStrOpt(d.get('tacheLibelleSnapshot', null))
@@ -336,8 +469,16 @@ service cloud.firestore {
     // ------------------------------------------------------------------
     // chantiers/{cid}/travauxSup/{id}
     // ------------------------------------------------------------------
+    function clesTravauxSup() {
+      return ['chantierId', 'libelle', 'dateProposition', 'description',
+        'statut', 'prixVenduCents', 'budgetDepensesCents',
+        'heuresPrevuesMinutes', 'effectifPrevu', 'dateDecision',
+        'createdAt', 'updatedAt', 'deletedAt', 'deletedReason'];
+    }
+
     function travauxSupValide(d, cid) {
-      return d.chantierId == cid
+      return clesAutorisees(d, clesTravauxSup())
+        && d.chantierId == cid
         && isStrNonVide(d.libelle)
         && isStrOpt(d.get('description', null))
         && isEnum(d.statut, statutsTravauxSup())
@@ -353,31 +494,56 @@ service cloud.firestore {
     // ------------------------------------------------------------------
     // chantiers/{cid}/justificatifs/{id}
     // ------------------------------------------------------------------
-    // storagePath n'est pas contraint au chantier : après `deplacerVers`
-    // (§9.11) le fichier reste sous le chemin du chantier d'origine.
-    function justificatifValide(d, cid) {
-      return d.chantierId == cid
+    function clesJustificatif() {
+      return ['chantierId', 'depenseId', 'storagePath', 'uploadStatus',
+        'mimeType', 'sizeBytes', 'takenAt',
+        'createdAt', 'updatedAt', 'deletedAt', 'deletedReason'];
+    }
+
+    // storagePath = users/{uid}/chantiers/{cidFichier}/justificatifs/{id}.{ext}
+    // (FirestorePaths.storageJustificatif). Après `deplacerVers` (§9.11) le
+    // fichier reste sous le chantier d'origine : cidFichier n'est donc pas
+    // contraint à cid, mais le chemin reste sous l'uid du propriétaire et le
+    // nom de fichier est celui du justificatif (Justificatif.nomFichier).
+    function cheminStorageValide(chemin, uid, id, mime) {
+      let parts = chemin.split('/');
+      return parts.size() == 6
+        && parts[0] == 'users'
+        && parts[1] == uid
+        && parts[2] == 'chantiers'
+        && parts[3].size() > 0
+        && parts[4] == 'justificatifs'
+        && parts[5] == id + '.' + extensionDe(mime);
+    }
+
+    function justificatifValide(d, uid, cid, id) {
+      return clesAutorisees(d, clesJustificatif())
+        && d.chantierId == cid
         && isStrOpt(d.get('depenseId', null))
-        && isStrOpt(d.get('storagePath', null))
         && isEnum(d.uploadStatus, statutsUpload())
         && isEnum(d.mimeType, mimesAutorises())
         && isIntRange(d.sizeBytes, 0, 10485760)
+        && isStrOpt(d.get('storagePath', null))
+        && (d.get('storagePath', null) == null
+          || cheminStorageValide(d.storagePath, uid, id, d.mimeType))
         && isTsOpt(d.get('takenAt', null))
         && softDeleteFields(d);
     }
 
     // ==================================================================
-    // Matches — isolation par uid, aucun delete physique (R6)
+    // Matches — isolation par uid, aucun delete physique (R6).
+    // Aucune règle `match /{path=**}/…` : les requêtes collectionGroup sont
+    // refusées (le client n'en fait pas).
     // ==================================================================
     match /users/{uid} {
       allow read: if isOwner(uid);
       allow create: if isOwner(uid)
         && utilisateurValide(request.resource.data)
-        && request.resource.data.createdAt == request.time
+        && createdAtUtilisateurCreation()
         && parametresHorodates();
       allow update: if isOwner(uid)
         && utilisateurValide(request.resource.data)
-        && unchanged('createdAt')
+        && createdAtUtilisateurMaj()
         && (unchanged('parametres') || parametresHorodates());
       allow delete: if false;
 
@@ -409,11 +575,13 @@ service cloud.firestore {
         allow read: if isOwner(uid);
         allow create: if isOwner(uid)
           && chantierValide(request.resource.data)
+          && creationActive()
           && horodatageCreation();
         // R2 : modePrix figé à la création.
         allow update: if isOwner(uid)
           && chantierValide(request.resource.data)
           && unchanged('modePrix')
+          && deletedAtCoherent()
           && horodatageMaj();
         allow delete: if false;
 
@@ -434,9 +602,11 @@ service cloud.firestore {
           allow read: if isOwner(uid);
           allow create: if isOwner(uid)
             && tacheValide(request.resource.data, cid)
+            && creationActive()
             && horodatageCreation();
           allow update: if isOwner(uid)
             && tacheValide(request.resource.data, cid)
+            && deletedAtCoherent()
             && horodatageMaj();
           allow delete: if false;
         }
@@ -445,9 +615,11 @@ service cloud.firestore {
           allow read: if isOwner(uid);
           allow create: if isOwner(uid)
             && depenseValide(request.resource.data, cid)
+            && creationActive()
             && horodatageCreation();
           allow update: if isOwner(uid)
             && depenseValide(request.resource.data, cid)
+            && deletedAtCoherent()
             && horodatageMaj();
           allow delete: if false;
         }
@@ -456,9 +628,11 @@ service cloud.firestore {
           allow read: if isOwner(uid);
           allow create: if isOwner(uid)
             && saisieHeuresValide(request.resource.data, cid)
+            && creationActive()
             && horodatageCreation();
           allow update: if isOwner(uid)
             && saisieHeuresValide(request.resource.data, cid)
+            && deletedAtCoherent()
             && horodatageMaj();
           allow delete: if false;
         }
@@ -467,9 +641,11 @@ service cloud.firestore {
           allow read: if isOwner(uid);
           allow create: if isOwner(uid)
             && travauxSupValide(request.resource.data, cid)
+            && creationActive()
             && horodatageCreation();
           allow update: if isOwner(uid)
             && travauxSupValide(request.resource.data, cid)
+            && deletedAtCoherent()
             && horodatageMaj();
           allow delete: if false;
         }
@@ -477,10 +653,12 @@ service cloud.firestore {
         match /justificatifs/{id} {
           allow read: if isOwner(uid);
           allow create: if isOwner(uid)
-            && justificatifValide(request.resource.data, cid)
+            && justificatifValide(request.resource.data, uid, cid, id)
+            && creationActive()
             && horodatageCreation();
           allow update: if isOwner(uid)
-            && justificatifValide(request.resource.data, cid)
+            && justificatifValide(request.resource.data, uid, cid, id)
+            && deletedAtCoherent()
             && horodatageMaj();
           allow delete: if false;
         }

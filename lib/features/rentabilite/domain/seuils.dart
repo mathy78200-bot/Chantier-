@@ -10,10 +10,10 @@ class Seuils {
   });
 
   factory Seuils.fromParametres(ParametresUtilisateur p) => Seuils(
-        orangePct: p.seuilOrangePct,
-        rougePct: p.seuilRougePct,
-        projectionPct: p.seuilProjectionPct,
-      );
+    orangePct: p.seuilOrangePct,
+    rougePct: p.seuilRougePct,
+    projectionPct: p.seuilProjectionPct,
+  );
 
   /// Écart dépenses (%) au-delà duquel le chantier passe orange.
   final double orangePct;

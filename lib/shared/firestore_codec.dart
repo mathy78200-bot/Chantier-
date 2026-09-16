@@ -55,8 +55,7 @@ abstract final class FirestoreCodec {
   /// Document → JSON d'entité (`Timestamp` → ISO 8601 UTC, `id` ajouté).
   static Map<String, dynamic> fromDoc(
     DocumentSnapshot<Map<String, dynamic>> snapshot,
-  ) =>
-      fromData(snapshot.data() ?? const {}, id: snapshot.id);
+  ) => fromData(snapshot.data() ?? const {}, id: snapshot.id);
 
   static Map<String, dynamic> fromData(
     Map<String, dynamic> data, {
@@ -71,19 +70,19 @@ abstract final class FirestoreCodec {
   }
 
   static Object? toTimestamp(Object? value) => switch (value) {
-        null => null,
-        Timestamp() => value,
-        DateTime() => Timestamp.fromDate(value),
-        String() => Timestamp.fromDate(DateTime.parse(value)),
-        _ => value,
-      };
+    null => null,
+    Timestamp() => value,
+    DateTime() => Timestamp.fromDate(value),
+    String() => Timestamp.fromDate(DateTime.parse(value)),
+    _ => value,
+  };
 
   static Object? _fromFirestoreValue(Object? value) => switch (value) {
-        Timestamp() => value.toDate().toUtc().toIso8601String(),
-        Map() => value.map(
-            (k, v) => MapEntry(k.toString(), _fromFirestoreValue(v)),
-          ),
-        List() => value.map(_fromFirestoreValue).toList(),
-        _ => value,
-      };
+    Timestamp() => value.toDate().toUtc().toIso8601String(),
+    Map() => value.map(
+      (k, v) => MapEntry(k.toString(), _fromFirestoreValue(v)),
+    ),
+    List() => value.map(_fromFirestoreValue).toList(),
+    _ => value,
+  };
 }

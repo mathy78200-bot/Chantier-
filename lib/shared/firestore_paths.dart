@@ -36,6 +36,5 @@ abstract final class FirestorePaths {
     String cid,
     String id,
     String extension,
-  ) =>
-      '${sousCollection(uid, cid, justificatifs)}/$id.$extension';
+  ) => '${sousCollection(uid, cid, justificatifs)}/$id.$extension';
 }

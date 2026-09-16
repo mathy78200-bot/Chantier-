@@ -23,12 +23,17 @@ void main() {
       expect(norm(Money.format(-5000)), '-50,00 €');
     });
 
-    test('suffixe HT / TTC si le mode est fourni (R2 : montants qualifiés)',
-        () {
-      expect(norm(Money.format(100000, mode: ModePrix.ht)), '1 000,00 € HT');
-      expect(norm(Money.format(100000, mode: ModePrix.ttc)), '1 000,00 € TTC');
-      expect(norm(Money.format(100000)), '1 000,00 €');
-    });
+    test(
+      'suffixe HT / TTC si le mode est fourni (R2 : montants qualifiés)',
+      () {
+        expect(norm(Money.format(100000, mode: ModePrix.ht)), '1 000,00 € HT');
+        expect(
+          norm(Money.format(100000, mode: ModePrix.ttc)),
+          '1 000,00 € TTC',
+        );
+        expect(norm(Money.format(100000)), '1 000,00 €');
+      },
+    );
 
     test('les espaces produits sont insécables (pas de retour à la ligne)', () {
       final s = Money.format(123456);

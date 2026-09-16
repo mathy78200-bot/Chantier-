@@ -21,17 +21,17 @@ enum StatutChantier {
   /// Transitions autorisées (§9.10 : appliquées dans l'UI et dans le service
   /// métier avant écriture ; les règles Firestore ne valident que les valeurs).
   Set<StatutChantier> get transitionsPossibles => switch (this) {
-        StatutChantier.aFaireSigner => const {
-            StatutChantier.aVenir,
-            StatutChantier.enCours,
-          },
-        StatutChantier.aVenir => const {
-            StatutChantier.enCours,
-            StatutChantier.aFaireSigner,
-          },
-        StatutChantier.enCours => const {StatutChantier.termine},
-        StatutChantier.termine => const {StatutChantier.enCours},
-      };
+    StatutChantier.aFaireSigner => const {
+      StatutChantier.aVenir,
+      StatutChantier.enCours,
+    },
+    StatutChantier.aVenir => const {
+      StatutChantier.enCours,
+      StatutChantier.aFaireSigner,
+    },
+    StatutChantier.enCours => const {StatutChantier.termine},
+    StatutChantier.termine => const {StatutChantier.enCours},
+  };
 
   bool canTransitionTo(StatutChantier cible) =>
       cible != this && transitionsPossibles.contains(cible);

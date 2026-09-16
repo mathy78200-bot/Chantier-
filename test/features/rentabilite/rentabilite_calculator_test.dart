@@ -46,32 +46,32 @@ void main() {
       expect(r.margePct, 96.5);
     });
 
-    test('R1 : 1 000 h saisies (3 personnes) ne changent pas la rentabilité',
-        () {
-      final sansHeures = RentabiliteCalculator.compute(
-        Fixtures.data(
-          depenses: [Fixtures.depense(montantCents: 35000)],
-        ),
-      );
-      final avecHeures = RentabiliteCalculator.compute(
-        Fixtures.data(
-          depenses: [Fixtures.depense(montantCents: 35000)],
-          heures: [
-            for (var i = 0; i < 50; i++)
-              Fixtures.heures(
-                id: 'h$i',
-                nbPersonnes: 3,
-                minutesParPersonne: 1200,
-              ),
-          ],
-        ),
-      );
+    test(
+      'R1 : 1 000 h saisies (3 personnes) ne changent pas la rentabilité',
+      () {
+        final sansHeures = RentabiliteCalculator.compute(
+          Fixtures.data(depenses: [Fixtures.depense(montantCents: 35000)]),
+        );
+        final avecHeures = RentabiliteCalculator.compute(
+          Fixtures.data(
+            depenses: [Fixtures.depense(montantCents: 35000)],
+            heures: [
+              for (var i = 0; i < 50; i++)
+                Fixtures.heures(
+                  id: 'h$i',
+                  nbPersonnes: 3,
+                  minutesParPersonne: 1200,
+                ),
+            ],
+          ),
+        );
 
-      expect(avecHeures.rentabiliteCents, sansHeures.rentabiliteCents);
-      expect(avecHeures.rentabiliteCents, 965000);
-      expect(avecHeures.margePct, sansHeures.margePct);
-      expect(avecHeures.depensesCents, 35000);
-    });
+        expect(avecHeures.rentabiliteCents, sansHeures.rentabiliteCents);
+        expect(avecHeures.rentabiliteCents, 965000);
+        expect(avecHeures.margePct, sansHeures.margePct);
+        expect(avecHeures.depensesCents, 35000);
+      },
+    );
 
     test('R3 : un TS accepté entre dans le prix vendu', () {
       final r = RentabiliteCalculator.compute(
@@ -172,9 +172,7 @@ void main() {
         'dépenses du chantier', () {
       final r = RentabiliteCalculator.compute(
         Fixtures.data(
-          travauxSup: [
-            Fixtures.travauxSup(id: 'ts-1', prixVenduCents: 200000),
-          ],
+          travauxSup: [Fixtures.travauxSup(id: 'ts-1', prixVenduCents: 200000)],
           depenses: [
             Fixtures.depense(id: 'd1', montantCents: 10000),
             Fixtures.depense(
