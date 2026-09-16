@@ -1,0 +1,495 @@
+rules_version = '2';
+
+// Règles Firestore — Suivi de rentabilité des chantiers.
+//
+// Références CLAUDE.md : §2 (R2 modePrix figé, R4 chantierId == cid, R6 aucun
+// delete physique, R11 quatre statuts), §5 (modèle), §9.2 (les invariants sont
+// aussi validés côté client), §9.9 (versionnage bibliothèque), §9.10 (les
+// transitions de statut ne sont PAS contraintes ici), §9.14 (périmètre :
+// isolation par uid, pas de quotas, App Check à activer avant production).
+//
+// Les écritures client sont des set(merge: true) ou update() : dans les deux
+// cas request.resource.data est l'état résultant complet du document, c'est lui
+// qui est validé. createdAt / updatedAt sont des serverTimestamp, comparés à
+// request.time.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ------------------------------------------------------------------
+    // Helpers génériques
+    // ------------------------------------------------------------------
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    function isTs(v) {
+      return v is timestamp;
+    }
+
+    function isTsOpt(v) {
+      return v == null || v is timestamp;
+    }
+
+    function isInt(v) {
+      return v is int;
+    }
+
+    function isIntMin(v, min) {
+      return v is int && v >= min;
+    }
+
+    function isIntRange(v, min, max) {
+      return v is int && v >= min && v <= max;
+    }
+
+    function isIntOpt(v) {
+      return v == null || v is int;
+    }
+
+    function isIntOptMin(v, min) {
+      return v == null || isIntMin(v, min);
+    }
+
+    function isNumMin(v, min) {
+      return v is number && v >= min;
+    }
+
+    function isNumOptMin(v, min) {
+      return v == null || isNumMin(v, min);
+    }
+
+    function isStr(v) {
+      return v is string;
+    }
+
+    function isStrNonVide(v) {
+      return v is string && v.trim().size() > 0;
+    }
+
+    function isStrOpt(v) {
+      return v == null || v is string;
+    }
+
+    function isBool(v) {
+      return v is bool;
+    }
+
+    function isList(v) {
+      return v is list;
+    }
+
+    function isMap(v) {
+      return v is map;
+    }
+
+    function isEnum(v, valeurs) {
+      return v is string && v in valeurs;
+    }
+
+    // Champ identique avant / après (absent des deux côtés accepté).
+    function unchanged(field) {
+      return request.resource.data.get(field, null) == resource.data.get(field, null);
+    }
+
+    // Seuls les champs listés diffèrent entre l'état avant et l'état après.
+    function seulsChampsModifies(champs) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(champs);
+    }
+
+    // R6 : deletedAt timestamp ou null, deletedReason string ou null.
+    function softDeleteFields(d) {
+      return isTsOpt(d.get('deletedAt', null)) && isStrOpt(d.get('deletedReason', null));
+    }
+
+    // ------------------------------------------------------------------
+    // Horodatage serveur (FirestoreCodec.toDoc)
+    // ------------------------------------------------------------------
+    function updatedAtServeur() {
+      return request.resource.data.updatedAt == request.time;
+    }
+
+    // Création : createdAt et updatedAt posés par le serveur.
+    function horodatageCreation() {
+      return request.resource.data.createdAt == request.time && updatedAtServeur();
+    }
+
+    // Mise à jour : createdAt inchangé, ou re-posé par le serveur (§9.3 : un
+    // document créé puis modifié hors-ligne est relu avec createdAt == null
+    // tant qu'il n'est pas synchronisé, le codec y remet un serverTimestamp).
+    function horodatageMaj() {
+      return isTs(request.resource.data.createdAt)
+        && (unchanged('createdAt') || request.resource.data.createdAt == request.time)
+        && updatedAtServeur();
+    }
+
+    // ------------------------------------------------------------------
+    // Énumérations (core/constants/enums.dart — sérialisées par `name`)
+    // ------------------------------------------------------------------
+    function modesPrix() {
+      return ['ht', 'ttc'];
+    }
+
+    // R11 : quatre statuts exactement.
+    function statutsChantier() {
+      return ['aFaireSigner', 'aVenir', 'enCours', 'termine'];
+    }
+
+    function typesDepense() {
+      return ['materiaux', 'sousTraitance', 'repas', 'hotel', 'deplacement', 'autre'];
+    }
+
+    function statutsTravauxSup() {
+      return ['propose', 'accepte', 'refuse'];
+    }
+
+    function statutsTache() {
+      return ['aFaire', 'enCours', 'terminee'];
+    }
+
+    function domainesCategorie() {
+      return ['depense', 'tache'];
+    }
+
+    function unites() {
+      return ['m', 'm2', 'm3', 'u', 'forfait'];
+    }
+
+    function statutsUpload() {
+      return ['pending', 'uploading', 'uploaded', 'failed'];
+    }
+
+    function mimesAutorises() {
+      return ['image/jpeg', 'image/png', 'application/pdf'];
+    }
+
+    // ------------------------------------------------------------------
+    // users/{uid}
+    // ------------------------------------------------------------------
+    // ParametresUtilisateur (champ `parametres`, avec son propre updatedAt).
+    function parametresValides(p) {
+      return isMap(p)
+        && isEnum(p.modePrixParDefaut, modesPrix())
+        && isNumMin(p.seuilOrangePct, 0)
+        && isNumMin(p.seuilRougePct, 0)
+        && isNumMin(p.seuilProjectionPct, 0)
+        && isIntMin(p.baremeKmCents, 0)
+        && isIntMin(p.effectifParDefaut, 1)
+        && isIntRange(p.minutesJourneeType, 1, 1440)
+        && isStr(p.entrepriseNom)
+        && isTsOpt(p.get('updatedAt', null));
+    }
+
+    function utilisateurValide(d) {
+      return isStr(d.email)
+        && isTs(d.createdAt)
+        && parametresValides(d.parametres);
+    }
+
+    function parametresHorodates() {
+      return request.resource.data.parametres.updatedAt == request.time;
+    }
+
+    // ------------------------------------------------------------------
+    // users/{uid}/categories/{id}
+    // ------------------------------------------------------------------
+    function categorieValide(d) {
+      return isStrNonVide(d.libelle)
+        && isEnum(d.domaine, domainesCategorie())
+        && isInt(d.ordre)
+        && isBool(d.actif)
+        && isList(d.sousCategories);
+    }
+
+    // ------------------------------------------------------------------
+    // users/{uid}/bibliothequeTaches/{id}
+    // ------------------------------------------------------------------
+    function tacheBibliothequeValide(d) {
+      return isStrNonVide(d.libelle)
+        && isStrOpt(d.get('categorieId', null))
+        && isStrOpt(d.get('sousCategorieId', null))
+        && isEnum(d.unite, unites())
+        && isNumMin(d.minutesParUnite, 0)
+        && isIntMin(d.effectifDefaut, 1)
+        && isIntMin(d.version, 1)
+        && isBool(d.actif);
+    }
+
+    // R5 / §9.9 : toute modification incrémente la version de 1.
+    function versionIncrementee() {
+      return request.resource.data.version == resource.data.version + 1;
+    }
+
+    // Archivage / réactivation : seul `actif` change, la version est conservée.
+    function archivageSeul() {
+      return request.resource.data.version == resource.data.version
+        && seulsChampsModifies(['actif', 'updatedAt']);
+    }
+
+    // ------------------------------------------------------------------
+    // users/{uid}/chantiers/{cid}
+    // ------------------------------------------------------------------
+    function chantierValide(d) {
+      return isStrNonVide(d.nom)
+        && isEnum(d.modePrix, modesPrix())
+        && isEnum(d.statut, statutsChantier())
+        && isStrOpt(d.get('clientNom', null))
+        && isStrOpt(d.get('clientTelephone', null))
+        && isStrOpt(d.get('adresse', null))
+        && isIntMin(d.prixVenduInitialCents, 0)
+        && isTsOpt(d.get('dateDevis', null))
+        && isTsOpt(d.get('dateSignature', null))
+        && isTsOpt(d.get('dateDebutPrevue', null))
+        && isTsOpt(d.get('dateFinPrevue', null))
+        && isTsOpt(d.get('dateDebutReelle', null))
+        && isTsOpt(d.get('dateFinReelle', null))
+        && isStrOpt(d.get('notes', null))
+        && softDeleteFields(d);
+    }
+
+    // ------------------------------------------------------------------
+    // chantiers/{cid}/previsionnel/main
+    // ------------------------------------------------------------------
+    // budgetParTypeCents : clés = TypeDepense.name, valeurs int >= 0.
+    function budgetParTypeValide(m) {
+      return isMap(m)
+        && m.keys().hasOnly(typesDepense())
+        && isIntOptMin(m.get('materiaux', null), 0)
+        && isIntOptMin(m.get('sousTraitance', null), 0)
+        && isIntOptMin(m.get('repas', null), 0)
+        && isIntOptMin(m.get('hotel', null), 0)
+        && isIntOptMin(m.get('deplacement', null), 0)
+        && isIntOptMin(m.get('autre', null), 0);
+    }
+
+    // chantierId est porté par le chemin (§5) : accepté seulement s'il vaut cid.
+    function previsionnelValide(d, cid) {
+      return (!('chantierId' in d) || d.chantierId == cid)
+        && isIntOptMin(d.get('budgetDepensesCents', null), 0)
+        && (!('budgetParTypeCents' in d) || budgetParTypeValide(d.budgetParTypeCents))
+        && isIntOptMin(d.get('heuresPrevuesMinutes', null), 0)
+        && isIntOptMin(d.get('heuresPersonnesPrevuesMinutes', null), 0)
+        && isIntOptMin(d.get('effectifPrevu', null), 1)
+        && isIntOptMin(d.get('dureePrevueJours', null), 0)
+        && isStrOpt(d.get('commentaire', null));
+    }
+
+    // ------------------------------------------------------------------
+    // chantiers/{cid}/taches/{id}
+    // ------------------------------------------------------------------
+    function tacheValide(d, cid) {
+      return d.chantierId == cid
+        && isStrNonVide(d.libelle)
+        && isStrOpt(d.get('categorieId', null))
+        && isStrOpt(d.get('sousCategorieId', null))
+        && isStrOpt(d.get('bibliothequeTacheId', null))
+        && isIntOpt(d.get('bibliothequeVersion', null))
+        && isEnum(d.unite, unites())
+        && isNumMin(d.quantitePrevue, 0)
+        && isNumOptMin(d.get('minutesParUniteSnapshot', null), 0)
+        && isIntOptMin(d.get('effectifDefautSnapshot', null), 1)
+        && isIntOptMin(d.get('heuresPrevuesMinutes', null), 0)
+        && isIntOptMin(d.get('effectifPrevu', null), 1)
+        && isStrOpt(d.get('travauxSupId', null))
+        && isEnum(d.statut, statutsTache())
+        && isInt(d.ordre)
+        && softDeleteFields(d);
+    }
+
+    // ------------------------------------------------------------------
+    // chantiers/{cid}/depenses/{id}
+    // ------------------------------------------------------------------
+    // R4 : une dépense appartient toujours à un chantier (chantierId == cid).
+    function depenseValide(d, cid) {
+      return d.chantierId == cid
+        && isEnum(d.type, typesDepense())
+        && isIntMin(d.montantCents, 0)
+        && isTs(d.date)
+        && isStrOpt(d.get('libelle', null))
+        && isStrOpt(d.get('fournisseur', null))
+        && isStrOpt(d.get('categorieId', null))
+        && isStrOpt(d.get('sousCategorieId', null))
+        && isStrOpt(d.get('tacheId', null))
+        && isStrOpt(d.get('travauxSupId', null))
+        && isList(d.justificatifIds)
+        && isNumOptMin(d.get('distanceKm', null), 0)
+        && isIntOptMin(d.get('baremeKmCentsSnapshot', null), 0)
+        && isBool(d.montantSaisiManuellement)
+        && isStrOpt(d.get('commentaire', null))
+        && softDeleteFields(d);
+    }
+
+    // ------------------------------------------------------------------
+    // chantiers/{cid}/heures/{id}
+    // ------------------------------------------------------------------
+    function saisieHeuresValide(d, cid) {
+      return d.chantierId == cid
+        && isTs(d.date)
+        && isStrOpt(d.get('tacheId', null))
+        && isStrOpt(d.get('tacheLibelleSnapshot', null))
+        && isStrOpt(d.get('travauxSupId', null))
+        && isIntMin(d.nbPersonnes, 1)
+        && isIntRange(d.minutesParPersonne, 0, 1440)
+        && isStrOpt(d.get('commentaire', null))
+        && softDeleteFields(d);
+    }
+
+    // ------------------------------------------------------------------
+    // chantiers/{cid}/travauxSup/{id}
+    // ------------------------------------------------------------------
+    function travauxSupValide(d, cid) {
+      return d.chantierId == cid
+        && isStrNonVide(d.libelle)
+        && isStrOpt(d.get('description', null))
+        && isEnum(d.statut, statutsTravauxSup())
+        && isIntMin(d.prixVenduCents, 0)
+        && isIntOptMin(d.get('budgetDepensesCents', null), 0)
+        && isIntOptMin(d.get('heuresPrevuesMinutes', null), 0)
+        && isIntOptMin(d.get('effectifPrevu', null), 1)
+        && isTs(d.dateProposition)
+        && isTsOpt(d.get('dateDecision', null))
+        && softDeleteFields(d);
+    }
+
+    // ------------------------------------------------------------------
+    // chantiers/{cid}/justificatifs/{id}
+    // ------------------------------------------------------------------
+    // storagePath n'est pas contraint au chantier : après `deplacerVers`
+    // (§9.11) le fichier reste sous le chemin du chantier d'origine.
+    function justificatifValide(d, cid) {
+      return d.chantierId == cid
+        && isStrOpt(d.get('depenseId', null))
+        && isStrOpt(d.get('storagePath', null))
+        && isEnum(d.uploadStatus, statutsUpload())
+        && isEnum(d.mimeType, mimesAutorises())
+        && isIntRange(d.sizeBytes, 0, 10485760)
+        && isTsOpt(d.get('takenAt', null))
+        && softDeleteFields(d);
+    }
+
+    // ==================================================================
+    // Matches — isolation par uid, aucun delete physique (R6)
+    // ==================================================================
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid)
+        && utilisateurValide(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && parametresHorodates();
+      allow update: if isOwner(uid)
+        && utilisateurValide(request.resource.data)
+        && unchanged('createdAt')
+        && (unchanged('parametres') || parametresHorodates());
+      allow delete: if false;
+
+      match /categories/{id} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && categorieValide(request.resource.data)
+          && horodatageCreation();
+        allow update: if isOwner(uid)
+          && categorieValide(request.resource.data)
+          && horodatageMaj();
+        allow delete: if false;
+      }
+
+      match /bibliothequeTaches/{id} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && tacheBibliothequeValide(request.resource.data)
+          && request.resource.data.version == 1
+          && horodatageCreation();
+        allow update: if isOwner(uid)
+          && tacheBibliothequeValide(request.resource.data)
+          && horodatageMaj()
+          && (versionIncrementee() || archivageSeul());
+        allow delete: if false;
+      }
+
+      match /chantiers/{cid} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && chantierValide(request.resource.data)
+          && horodatageCreation();
+        // R2 : modePrix figé à la création.
+        allow update: if isOwner(uid)
+          && chantierValide(request.resource.data)
+          && unchanged('modePrix')
+          && horodatageMaj();
+        allow delete: if false;
+
+        match /previsionnel/{docId} {
+          allow read: if isOwner(uid);
+          allow create: if isOwner(uid)
+            && docId == 'main'
+            && previsionnelValide(request.resource.data, cid)
+            && horodatageCreation();
+          allow update: if isOwner(uid)
+            && docId == 'main'
+            && previsionnelValide(request.resource.data, cid)
+            && horodatageMaj();
+          allow delete: if false;
+        }
+
+        match /taches/{id} {
+          allow read: if isOwner(uid);
+          allow create: if isOwner(uid)
+            && tacheValide(request.resource.data, cid)
+            && horodatageCreation();
+          allow update: if isOwner(uid)
+            && tacheValide(request.resource.data, cid)
+            && horodatageMaj();
+          allow delete: if false;
+        }
+
+        match /depenses/{id} {
+          allow read: if isOwner(uid);
+          allow create: if isOwner(uid)
+            && depenseValide(request.resource.data, cid)
+            && horodatageCreation();
+          allow update: if isOwner(uid)
+            && depenseValide(request.resource.data, cid)
+            && horodatageMaj();
+          allow delete: if false;
+        }
+
+        match /heures/{id} {
+          allow read: if isOwner(uid);
+          allow create: if isOwner(uid)
+            && saisieHeuresValide(request.resource.data, cid)
+            && horodatageCreation();
+          allow update: if isOwner(uid)
+            && saisieHeuresValide(request.resource.data, cid)
+            && horodatageMaj();
+          allow delete: if false;
+        }
+
+        match /travauxSup/{id} {
+          allow read: if isOwner(uid);
+          allow create: if isOwner(uid)
+            && travauxSupValide(request.resource.data, cid)
+            && horodatageCreation();
+          allow update: if isOwner(uid)
+            && travauxSupValide(request.resource.data, cid)
+            && horodatageMaj();
+          allow delete: if false;
+        }
+
+        match /justificatifs/{id} {
+          allow read: if isOwner(uid);
+          allow create: if isOwner(uid)
+            && justificatifValide(request.resource.data, cid)
+            && horodatageCreation();
+          allow update: if isOwner(uid)
+            && justificatifValide(request.resource.data, cid)
+            && horodatageMaj();
+          allow delete: if false;
+        }
+      }
+    }
+
+    // Tout autre chemin est refusé.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
