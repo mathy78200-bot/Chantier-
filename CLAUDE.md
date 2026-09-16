@@ -52,13 +52,14 @@ Les 7 questions auxquelles l'app répond :
 - **Quantités** : `double` (m, m², u). Conversion vers minutes uniquement via `Rounding`.
 - **Dates** : UTC en base, affichées en local (`DateFmt`). Dates métier saisies par l'utilisateur ; `createdAt`/`updatedAt` = `serverTimestamp` (lus avec `estimate` si besoin).
 - **IDs** : `Uuid().v4()` côté client.
-- **Entités** : Freezed **2.x** (`class X with _$X`, constructeur privé `const X._()` pour les getters). Aucun import Firebase dans `domain/`.
+- **Entités** : Freezed **4.x** (`abstract class X with _$X`, constructeur privé `const X._()` pour les getters — migration en bloc depuis la syntaxe 2.x, cf. §9.1 : freezed 2.x exige un `analyzer` incompatible avec Dart 3.13). Aucun import Firebase dans `domain/`.
 - **Sérialisation** : json_serializable + `FirestoreCodec` (`shared/firestore_codec.dart`) qui convertit Timestamp ↔ ISO 8601 et gère `createdAt`/`updatedAt`. Les DTO n'existent pas comme classes séparées : le codec + `toJson`/`fromJson` jouent ce rôle. Les champs date à convertir sont listés dans `FirestoreCodec.toDoc` — **ajouter tout nouveau champ date à cette liste**.
 - **Repositories** : interface dans `domain/`, implémentation Firestore dans `data/`. Sous-collections de chantier via `FirestoreSubcollectionRepository<T>` (générique : `watchActifs`, `watchCorbeille`, `upsert`, `softDelete`, `restore`).
-- **État** : Riverpod 2 avec providers écrits à la main (`Provider`, `StreamProvider.family`, `AsyncNotifier`). `riverpod_generator` est déclaré mais **non utilisé** pour l'instant — ne pas mélanger les deux styles sans décision explicite.
-- **Navigation** : go_router 14, `StatefulShellRoute.indexedStack` à 4 branches, bouton ＋ contextuel dans `AppShell`. Le formulaire « nouveau chantier » est poussé sur le navigateur racine.
+- **État** : Riverpod 2 (`flutter_riverpod` 2.6) avec providers écrits à la main (`Provider`, `StreamProvider.family`, `AsyncNotifier`). `riverpod_generator` n'est **pas déclaré** (sa version 2.x est irrésolvable avec `freezed` 4 / `build_runner` 2.16) — ne pas introduire de providers générés sans décision explicite.
+- **Navigation** : go_router 18 (API `StatefulShellRoute.indexedStack` inchangée depuis la 14), 4 branches, bouton ＋ contextuel dans `AppShell`. Le formulaire « nouveau chantier » est poussé sur le navigateur racine.
 - **Calculs** : `features/rentabilite/domain/` est **Dart pur** (aucun import Flutter/Firebase). Point d'entrée : `ChantierKpis.compute(ChantierData, Seuils)`. L'UI reçoit un `ChantierKpis` et **ne recalcule jamais rien**.
-- **Filtrage soft delete** : `ChantierData` exclut lui-même les éléments supprimés ; les repositories filtrent `deletedAt == null` côté requête.
+- **Filtrage soft delete** : `ChantierData` exclut lui-même les éléments supprimés ; les repositories filtrent `deletedAt == null` côté requête (le champ est toujours écrit, à `null` explicite : Firestore ne retourne pas les documents où il est absent).
+- **Erreurs d'écriture** (§9.2) : les repositories lancent les écritures avec `unawaited` et rendent une `Future` déjà complétée ; les refus arrivent dans `WriteErrorNotifier` (`shared/write_error_notifier.dart`) que `AppShell` affiche en SnackBar. Les invariants des règles sont validés côté client avant écriture (`ValidationException`).
 - **Langue** : code en anglais technique / français métier (noms d'entités et de champs en français, comme validé). UI 100 % français.
 - **Lint** : `flutter_lints` + `prefer_single_quotes`, `always_declare_return_types`.
 
@@ -68,7 +69,7 @@ Les 7 questions auxquelles l'app répond :
 
 ```
 lib/
-├── main.dart, app.dart, firebase_options.example.dart
+├── main.dart, app.dart, firebase_options.example.dart   # firebase_options.dart est gitignoré (flutterfire configure)
 ├── core/
 │   ├── constants/{enums.dart, defaults.dart}
 │   ├── utils/{rounding.dart, money.dart, duration_fmt.dart, date_utils.dart}
@@ -79,7 +80,7 @@ lib/
 ├── shared/
 │   ├── chantier_subcollection_repository.dart   # interface générique
 │   ├── firestore_subcollection_repository.dart  # impl générique soft delete
-│   ├── firestore_codec.dart, firestore_paths.dart
+│   ├── firestore_codec.dart, firestore_paths.dart, write_error_notifier.dart
 │   └── providers/{firebase, repository, data}_providers.dart
 └── features/
     ├── auth/           data/auth_repository ; presentation/{login_screen, auth_controller}
@@ -88,14 +89,16 @@ lib/
     ├── heures/         domain/{saisie_heures, heures_repository} ; data/
     ├── taches/         domain/{tache_chantier, tache_repository} ; data/
     ├── travaux_sup/    domain/{travaux_supplementaire, travaux_sup_repository} ; data/
-    ├── justificatifs/  domain/{justificatif, justificatif_repository} ; data/ (upload)
+    ├── justificatifs/  domain/{justificatif, justificatif_repository} ; data/{firestore_justificatif_repository, justificatif_storage}
     ├── bibliotheque/   domain/{bibliotheque_tache, categorie, bibliotheque_repository} ; data/
     ├── reglages/       domain/{parametres_utilisateur, parametres_repository} ; data/ ; presentation/
-    ├── rentabilite/    domain/ (11 calculateurs purs) ; presentation/{kpis_providers, rentabilite_screen}
+    ├── rentabilite/    domain/{seuils, chantier_data, resultats, chantier_kpis, 11 *_calculator} ; presentation/{kpis_providers, rentabilite_screen}
     ├── accueil/        presentation/accueil_screen
     └── corbeille/      (vide — à faire)
-firebase/{firestore.rules, storage.rules, firestore.indexes.json}, firebase.json
-test/{core/rounding_test, fixtures/fixtures, features/rentabilite/*_test (8), features/depenses/data/*_test}
+firebase/{firestore.rules, storage.rules, firestore.indexes.json, README.md}, firebase.json, README.md
+test/{core/{rounding, money, duration_fmt}_test, shared/firestore_codec_test, fixtures/fixtures,
+      features/rentabilite/*_calculator_test (11) + chantier_kpis_test, features/depenses/data/*_test,
+      features/*/presentation/*_screen_test (tests de rendu)}
 ```
 
 ---
@@ -170,15 +173,16 @@ accueil          : par ModePrix — caVendu, depenses, rentabilite, margeMoyenne
 
 ## 7. État du projet
 
-### Fait (squelette, non compilé — voir §9)
+### Fait (squelette compilé : `flutter analyze` sans problème, `flutter test` vert — Flutter 3.47.4 / Dart 3.13.3)
 - pubspec, lint, build.yaml, `.gitignore`, `firebase.json`, règles Firestore/Storage v2, index composites.
 - Entités Freezed, interfaces et implémentations Firestore de tous les repositories.
-- 11 calculateurs purs + 8 suites de tests + tests arrondis + test repository (`fake_cloud_firestore`).
+- 11 calculateurs purs + 12 suites de tests (formules §6 épinglées à la main) + tests arrondis / formatage / codec + test repository (`fake_cloud_firestore`) + tests de rendu des écrans.
 - Providers Riverpod, router, shell 4 onglets + ＋ contextuel.
-- Écrans de base : login, accueil, liste chantiers, création chantier, fiche chantier (KPIs), rentabilité, réglages.
+- Écrans de base : login, accueil, liste chantiers, création / modification chantier, fiche chantier (KPIs), rentabilité, réglages.
+- Adaptations de versions (§9.1) : `freezed` 4, `go_router` 18, `intl: any`, `riverpod_generator` non déclaré.
 
 ### Étapes suivantes (dans l'ordre, une validation entre chaque)
-1. **Compilation et tests verts** (`flutter create .`, `pub get`, `build_runner`, `flutter test`). Corriger les erreurs sans changer l'architecture.
+1. ~~**Compilation et tests verts**~~ — fait (`pub get`, `build_runner`, `flutter analyze`, `flutter test`). Reste à lancer une fois `flutter create . --platforms=android,ios --org <votre org>` (dossiers de plateforme non versionnés tant que l'organisation n'est pas choisie) et `flutterfire configure`.
 2. **Formulaires métier du ＋ contextuel** : dépense (+ variantes sous-traitance/repas/hôtel), déplacement (km × barème ou manuel), heures, tâche (libre ou depuis bibliothèque avec snapshot), travaux sup, justificatif (photo → local → queue). Listes correspondantes dans la fiche chantier.
 3. **Prévisionnel** : formulaire mode simple + affichage de la complétude et des manquants.
 4. **Transitions de statut** avec confirmations et dates automatiques.
@@ -208,13 +212,13 @@ flutter run
 
 ## 9. Analyse des principaux challenges et problèmes
 
-### 9.1 Le squelette n'a jamais été compilé
-Écrit sans SDK Flutter. Points les plus probables à corriger au premier `flutter analyze` :
-- **Versions de packages** : `intl` doit correspondre à celui épinglé par `flutter_localizations` (mettre `intl: any` si conflit). `go_router` 14 vs 15+ (API `StatefulShellRoute` stable, mais vérifier). `freezed` 2.5 : si 3.x est résolu, la syntaxe devient `abstract class X with _$X` — rester en 2.x ou migrer toutes les entités d'un coup.
-- `DropdownButtonFormField(value:)` déprécié au profit de `initialValue` sur Flutter ≥ 3.32.
-- `fake_cloud_firestore` : support de `where('deletedAt', isNull: false)` à vérifier ; sinon adapter `watchCorbeille` du test.
-- `GoRouterState.of(context).matchedLocation` dans `AppShell` : vérifier que le contexte est bien sous le shell.
-- Le `cascade` dans `watchPrevisionnel` (`fromDoc(d)..['chantierId'] = …`) est valide mais à confirmer.
+### 9.1 Compilation : points levés
+Le squelette compile et ses tests passent (Flutter 3.47.4 / Dart 3.13.3). Ce qui a été tranché :
+- **Versions de packages** : `intl: any` (épinglé par `flutter_localizations`) ; `go_router` 18 (API `StatefulShellRoute` inchangée) ; `freezed` 2.x impossible (exige `analyzer < 8`, Dart 3.13 impose ≥ 13) → toutes les entités migrées d'un coup en syntaxe `abstract class X with _$X` (freezed 4.0.1) ; `riverpod_generator` 2.x irrésolvable → non déclaré.
+- `DropdownButtonFormField(value:)` : non utilisé (`SegmentedButton` pour les enums).
+- `fake_cloud_firestore` 4.2 supporte `where('deletedAt', isNull: false)` ; `watchCorbeille` testé tel quel. Attention : le fake matche `isNull: true` aussi pour un champ absent, contrairement à Firestore réel — d'où l'écriture systématique de `deletedAt: null`.
+- `GoRouterState.of(context)` dans `AppShell` : le contexte est celui du `builder` de `StatefulShellRoute`, donc sous le shell ; à confirmer au premier `flutter run`.
+- `cloud_firestore` 6.9 n'expose pas `ServerTimestampBehavior.estimate` : un document créé hors-ligne est relu avec `createdAt == null` jusqu'à la synchronisation ; le codec repose alors un `serverTimestamp` et les règles acceptent `createdAt == request.time` en mise à jour.
 
 ### 9.2 Hors-ligne : les écritures « non attendues » cachent les refus de règles
 `unawaited(ref.set(...))` rend l'UI instantanée, mais **si une règle Firestore refuse l'écriture, l'erreur arrive plus tard et n'est vue nulle part**. Il faut :
